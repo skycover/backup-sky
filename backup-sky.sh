@@ -33,7 +33,7 @@ BKPSKY_CONF_MINOR=2
 #########################################################
 BKPSKY_CURENT_VERSION=1.2
 ACCOUNT="newuser"
-SERVER="nonexistent.skycover.ru:2222"
+SERVER="nonexistent.skycover.ru"
 BKPSKY_SERVER="ssh://\$ACCOUNT@\$SERVER"
 BKPSKY_IDENTITY="$HOME/.ssh/id_rsa"
 BKPSKY_SIGNKEY=""
