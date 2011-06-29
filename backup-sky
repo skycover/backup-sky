@@ -17,12 +17,69 @@
 # to simplyfy config-based backups.
 # Go http://github.com/skycover/backup-sky for README and instructions
 
+do_help () {
+  cat <<EOF
+Usage $0 [-n PREFIX] <backup|status|list|restore|targets> [[TARGET|all] [full|inc] [duplicity args]]
+
+backup TARGET - backup target
+    The full backup is maiden first.
+    Then incremental backups are created (unless "full" is specified)
+
+status TARGET - show collection status
+
+list TARGET - list files in the backup
+    TARGET must be specified exactly
+
+restore TARGET [directory] - restore TARGET into directory
+    TARGET must be specified exactly
+
+targets - list all target names
+
+TARGET - the target name from $confdir/targets
+    "all" means all defined targets
+    void TARGET assumes "all"
+    "mysql-full" is treated with mysql start/stop scripts upon backup
+
+-n PREFIX - alternate config path
+    SHOULD be the first argument
+    Conventional paths are
+      confdir=$confdir
+      logdir=$logdir
+      cachedir=$cachedir
+    Alternate paths are
+      confdir=PREFIX
+      logdir=PREFIX/log
+      cachedir=PREFIX/cache
+    You may also reconfigure logdir and cachedir in the "env" config file
+
+The software origin is http://github.com/skycover/backup-sky/
+EOF
+
+  exit 1
+}
+
+# Turn on strict error check for config phase
+set -e
 #########################################################
 # System names
 #########################################################
 pname=backup-sky
-etc=/etc
-var=/var
+if [ "$1" = "-p" ]; then
+  if [ -n "$2" ]; then
+    prefix=$2
+    confdir=$prefix
+    logdir=$prefix/log
+    cachedir=$prefix/cache
+    shift 2
+  else
+    echo '"-p" should followed by prefix path"'
+    exit 1
+  fi
+else
+  confdir=/etc/$pname
+  logdir=/var/log/$pname
+  cachedir=/var/cache/$pname
+fi
 
 # last config update version
 BKPSKY_CONF_MAJOR=1
@@ -31,7 +88,7 @@ BKPSKY_CONF_MINOR=2
 #########################################################
 # Default settings. Will be overriden by env file
 #########################################################
-BKPSKY_CURENT_VERSION=1.2
+BKPSKY_CURENT_VERSION=1.3
 ACCOUNT="newuser"
 SERVER="nonexistent.skycover.ru"
 BKPSKY_SERVER="ssh://\$ACCOUNT@\$SERVER"
@@ -40,14 +97,20 @@ BKPSKY_SIGNKEY=""
 PASSPHRASE="secret"
 BKPSKY_VOLSIZE=50
 BKPSKY_SSH_OPTS=""
-BKPSKY_LOG=$var/log/$pname
-BKPSKY_CACHE=$var/cache/$pname
+BKPSKY_LOG=$logdir
+BKPSKY_CACHE=$cachedir
+
+
+#########################################################
+# Can print help before activity
+#########################################################
+test "$1" = "-h" && do_help
 
 #########################################################
 # Configuration upgrade procedure
 #########################################################
 write_env() {
-cat <<EOF >$etc/$pname/env
+cat <<EOF >$confdir/env
 # Software version
 BKPSKY_VERSION=$BKPSKY_CURENT_VERSION
 
@@ -91,16 +154,16 @@ EOF
 #########################################################
 # Self-check and fresh installation
 #########################################################
-test -d $etc/$pname || mkdir  $etc/$pname
-chmod 700 $etc/$pname
+test -d $confdir || mkdir  $confdir
+chmod 700 $confdir
 
-if [ ! -f $etc/$pname/env ]; then
+if [ ! -f $confdir/env ]; then
   write_env
   echo Default environment was created.
-  echo You should edit $etc/$pname/env with your settings
+  echo You should edit $confdir/env with your settings
   ex=1
 else
-  . $etc/$pname/env
+  . $confdir/env
 
   if [ -z "$BKPSKY_VERSION" ]; then
     BKPSKY_MAJOR=0
@@ -117,8 +180,8 @@ else
   fi
 fi
 
-if [ ! -f $etc/$pname/targets ]; then
-  cat <<EOF >$etc/$pname/targets
+if [ ! -f $confdir/targets ]; then
+  cat <<EOF >$confdir/targets
 # Te backup targets specification
 #
 # Comment strings has the leading hash+space
@@ -131,7 +194,7 @@ if [ ! -f $etc/$pname/targets ]; then
 # * QUIT word is mandatory at the end
 #
 # Support scripts:
-# When the target is backed up, then $etc/$pname/scripts/TARGET.[pre|post]
+# When the target is backed up, then $confdir/scripts/TARGET.[pre|post]
 # will be executed around the backup comand, to properly maintain the services
 # If .pre script set \$skip_backup variable, then the rest of this target
 # will not be executes
@@ -147,20 +210,20 @@ if [ ! -f $etc/$pname/targets ]; then
 QUIT
 EOF
   echo Default targets file was created.
-  echo You should edit $etc/$pname/targets with your backup targets
+  echo You should edit $confdir/targets with your backup targets
   ex=1
 fi
 
 # Covering possible security issues
-chmod 600 $etc/$pname/targets
-chmod 600 $etc/$pname/env
+chmod 600 $confdir/targets
+chmod 600 $confdir/env
 
 ################################
 # Installation: Script templates
 ################################
-BKPSKY_SCRIPTS=$etc/$pname/scripts
+BKPSKY_SCRIPTS=$confdir/scripts
 mkdir -p $BKPSKY_SCRIPTS
-chmod 700 $etc/$pname/scripts
+chmod 700 $confdir/scripts
 
 if [ ! -f "$BKPSKY_SCRIPTS/mysql.pre" ]; then
 cat <<EOF >"$BKPSKY_SCRIPTS/mysql.pre"
@@ -193,7 +256,7 @@ fi
 
 # Personalization check
 if [ "$PASSPHRASE" = "secret" -o "$ACCOUNT" = "newuser" -o "$SERVER" = "nonexistent.skycover.ru" ]; then
-  echo Please edit the backup settings in $etc/$pname
+  echo Please edit the backup settings in $confdir
   ex=1
 fi
 
@@ -202,6 +265,8 @@ test -n "$ex" && exit 1
 mkdir -p $BKPSKY_LOG
 mkdir -p $BKPSKY_CACHE
 
+# Turn off strict error check after config phase
+set +e
 #########################################################
 # Technological variables
 #########################################################
@@ -277,7 +342,7 @@ exec_func() {
 }
 
 main_loop() {
-  cat $etc/$pname/targets|while read WORD REST; do
+  cat $confdir/targets|while read WORD REST; do
     case "$WORD" in
     "#")
       # comment
@@ -343,31 +408,6 @@ targets)
   main_loop do_targets
 ;;
 *)
-  cat <<EOF
-Usage $0 <backup|status|list|restore|targets> [[TARGET|all] [full|inc] [duplicity args]]
-
-backup TARGET - backup target
-    The full backup is maiden first.
-    Then incremental backups are created (unless "full" is specified)
-
-status TARGET - show collection status
-
-list TARGET - list files in the backup
-    TARGET must be specified exactly
-
-restore TARGET [directory] - restore TARGET into directory
-    TARGET must be specified exactly
-
-targets - list all target names
-
-TARGET - the target name from $etc/$pname/targets
-    "all" means all defined targets
-    void TARGET assumes "all"
-    "mysql-full" is treated with mysql start/stop scripts upon backup
-
-The software origin is http://github.com/skycover/backup-sky/
-EOF
-
-  exit 1
+  do_help
 ;;
 esac
